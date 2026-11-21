@@ -53,35 +53,42 @@ export interface PredictionResult {
   readonly stationaryStep?: number;
 }
 
-export interface AcademicPreset {
+export interface PresetDefinition {
+  readonly id: string;
+  readonly title: string;
+  readonly category: string;
+  readonly description: string;
   readonly states: readonly MarkovState[];
   readonly defaultInitialState: ProbabilityVector;
   readonly defaultTransitionMatrix: TransitionMatrix;
 }
 
 /**
- * Preset predeterminado para el modelado de Rendimiento Académico Estudiantil.
- * Estados: Alto Rendimiento, Rendimiento Regular, En Riesgo.
+ * Preset predeterminado para el modelado de Rendimiento Académico Estudiantil (3x3).
  */
-export const ACADEMIC_PRESET: AcademicPreset = {
+export const ACADEMIC_PRESET: PresetDefinition = {
+  id: 'academic',
+  title: 'Rendimiento Académico (3x3)',
+  category: 'Educación',
+  description: 'Trayectoria y probabilidad de retención, avance regular o rezago estudiantil.',
   states: [
     {
       id: 'high',
       name: 'Alto Rendimiento',
       description: 'Estudiantes sobresalientes con materias al día y alto promedio',
-      color: '#10B981',
+      color: '#10B981', // Verde esmeralda
     },
     {
       id: 'regular',
       name: 'Rendimiento Regular',
-      description: 'Estudiantes con avance curricular estándar y riesgo bajo o moderado',
-      color: '#F59E0B',
+      description: 'Estudiantes con avance curricular estándar y riesgo moderado',
+      color: '#F59E0B', // Ámbar
     },
     {
       id: 'risk',
       name: 'En Riesgo',
       description: 'Estudiantes en rezago, materias reprobadas o alerta de deserción',
-      color: '#EF4444',
+      color: '#EF4444', // Carmesí
     },
   ],
   defaultInitialState: [0.50, 0.30, 0.20],
@@ -91,6 +98,56 @@ export const ACADEMIC_PRESET: AcademicPreset = {
     [0.10, 0.30, 0.60],
   ],
 };
+
+/**
+ * Preset de Clima Meteorológico (3x3).
+ */
+export const WEATHER_PRESET: PresetDefinition = {
+  id: 'weather',
+  title: 'Clima Meteorológico (3x3)',
+  category: 'Meteorología',
+  description: 'Transición atmosférica entre estados de tiempo diario.',
+  states: [
+    { id: 'sunny', name: 'Soleado', description: 'Día despejado con alta radiación', color: '#FBBF24' },
+    { id: 'cloudy', name: 'Nublado', description: 'Cielo cubierto con nubosidad moderada', color: '#94A3B8' },
+    { id: 'rainy', name: 'Lluvioso', description: 'Precipitaciones intensas o tormentas', color: '#38BDF8' },
+  ],
+  defaultInitialState: [0.60, 0.25, 0.15],
+  defaultTransitionMatrix: [
+    [0.70, 0.20, 0.10],
+    [0.30, 0.40, 0.30],
+    [0.20, 0.45, 0.35],
+  ],
+};
+
+/**
+ * Preset de Tráfico Urbano (4x4).
+ */
+export const TRAFFIC_PRESET: PresetDefinition = {
+  id: 'traffic',
+  title: 'Tráfico Urbano (4x4)',
+  category: 'Transporte y Movilidad',
+  description: 'Niveles de congestión vehicular en arterias viales principales.',
+  states: [
+    { id: 'free', name: 'Fluido', description: 'Velocidad óptima sin detenciones', color: '#34D399' },
+    { id: 'moderate', name: 'Moderado', description: 'Flujo continuo a velocidad reducida', color: '#60A5FA' },
+    { id: 'congested', name: 'Congestionado', description: 'Detenciones intermitentes y demoras', color: '#FB923C' },
+    { id: 'gridlock', name: 'Paralizado', description: 'Colapso vial o embotellamiento severo', color: '#F43F5E' },
+  ],
+  defaultInitialState: [0.40, 0.30, 0.20, 0.10],
+  defaultTransitionMatrix: [
+    [0.60, 0.25, 0.10, 0.05],
+    [0.20, 0.50, 0.20, 0.10],
+    [0.05, 0.25, 0.50, 0.20],
+    [0.05, 0.10, 0.35, 0.50],
+  ],
+};
+
+export const AVAILABLE_PRESETS: readonly PresetDefinition[] = [
+  ACADEMIC_PRESET,
+  WEATHER_PRESET,
+  TRAFFIC_PRESET,
+];
 
 /**
  * Valida que una matriz de transición cumpla con las propiedades estocásticas por filas:
@@ -229,6 +286,58 @@ export function validateInitialState(
 }
 
 /**
+ * Normaliza las filas de una matriz de transición para que sumen exactamente 1.0.
+ * Si una fila suma 0 o no tiene elementos válidos, divide equitativamente 1/N.
+ */
+export function normalizeMatrixRows(matrix: TransitionMatrix): MutableTransitionMatrix {
+  const n = matrix.length;
+  return matrix.map((row) => {
+    const sanitizedRow = row.map((val) => (isNaN(val) || val < 0 ? 0 : val));
+    const rowSum = sanitizedRow.reduce((acc, curr) => acc + curr, 0);
+
+    if (rowSum <= 0) {
+      const equalShare = Number((1 / n).toFixed(6));
+      const normalized = new Array(n).fill(equalShare);
+      // Ajustar último elemento para suma exacta 1.0
+      const currentSum = equalShare * n;
+      normalized[n - 1] = Number((equalShare + (1.0 - currentSum)).toFixed(6));
+      return normalized;
+    }
+
+    // Normalizar proporcionalmente y redondear a 4 decimales
+    const rawNormalized = sanitizedRow.map((v) => v / rowSum);
+    const rounded = rawNormalized.map((v) => Number(v.toFixed(4)));
+    const roundSum = rounded.reduce((a, b) => a + b, 0);
+    const diff = Number((1.0 - roundSum).toFixed(4));
+    rounded[n - 1] = Number((rounded[n - 1]! + diff).toFixed(4));
+    return rounded;
+  });
+}
+
+/**
+ * Normaliza un vector de estado inicial para que sume 1.0.
+ */
+export function normalizeVector(vector: ProbabilityVector): MutableProbabilityVector {
+  const n = vector.length;
+  const sanitized = vector.map((val) => (isNaN(val) || val < 0 ? 0 : val));
+  const sum = sanitized.reduce((acc, curr) => acc + curr, 0);
+
+  if (sum <= 0) {
+    const equalShare = Number((1 / n).toFixed(4));
+    const normalized = new Array(n).fill(equalShare);
+    const currentSum = equalShare * n;
+    normalized[n - 1] = Number((equalShare + (1.0 - currentSum)).toFixed(4));
+    return normalized;
+  }
+
+  const rounded = sanitized.map((v) => Number((v / sum).toFixed(4)));
+  const roundSum = rounded.reduce((a, b) => a + b, 0);
+  const diff = Number((1.0 - roundSum).toFixed(4));
+  rounded[n - 1] = Number((rounded[n - 1]! + diff).toFixed(4));
+  return rounded;
+}
+
+/**
  * Multiplica dos matrices cuadradas determinísticamente (A x B).
  */
 export function multiplyMatrices(
@@ -256,7 +365,6 @@ export function multiplyMatrices(
 
 /**
  * Calcula la potencia entera n de una matriz cuadrada de transición P^n.
- * Utiliza exponenciación binaria recursiva/iterativa determinista O(n^3 log exponente).
  */
 export function matrixPower(
   matrix: TransitionMatrix,
@@ -268,7 +376,6 @@ export function matrixPower(
 
   const n = matrix.length;
 
-  // Matriz identidad para exponente 0
   if (exponent === 0) {
     return Array.from({ length: n }, (_, i) =>
       Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
@@ -279,7 +386,6 @@ export function matrixPower(
     return matrix.map((row) => [...row]);
   }
 
-  // Exponenciación binaria
   let base: MutableTransitionMatrix = matrix.map((row) => [...row]);
   let result: MutableTransitionMatrix = Array.from({ length: n }, (_, i) =>
     Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
@@ -301,7 +407,6 @@ export function matrixPower(
 
 /**
  * Multiplica un vector de probabilidad fila por una matriz de transición: pi * P.
- * En cadenas de Markov con matrices estocásticas por filas, la distribución siguiente es pi_{t+1} = pi_t * P.
  */
 export function multiplyMatrixVector(
   vector: ProbabilityVector,
@@ -328,8 +433,7 @@ export function multiplyMatrixVector(
 }
 
 /**
- * Calcula la predicción de distribución de estados para los pasos especificados n in steps (por defecto [1, 3, 5, 10]).
- * Detecta también si el sistema alcanza un estado estacionario dentro de una tolerancia.
+ * Calcula la predicción de distribución de estados para los pasos especificados.
  */
 export function predictSteps(
   initialState: ProbabilityVector,
@@ -351,7 +455,6 @@ export function predictSteps(
     );
   }
 
-  // Ordenamos los pasos únicos
   const sortedSteps = [...new Set(steps)].filter((s) => s >= 0).sort((a, b) => a - b);
 
   const stepPredictions: StepPrediction[] = [];
@@ -371,7 +474,6 @@ export function predictSteps(
 
     const sum = probs.reduce((acc, val) => acc + val, 0);
 
-    // Detección de convergencia respecto al paso anterior calculado
     if (previousProbs && !isStationaryReached) {
       const maxDiff = Math.max(...probs.map((p, idx) => Math.abs(p - previousProbs![idx]!)));
       if (maxDiff < convergenceTolerance) {
